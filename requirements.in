@@ -2,3 +2,4 @@ langchain
 langgraph
 langchain-groq
 python-dotenv
+langgraph_supervisor

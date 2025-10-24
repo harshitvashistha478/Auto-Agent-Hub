@@ -20,7 +20,7 @@ class GraphOverview(BaseModel):
     edges: List[Edge]
 
 
-class SupervisorStructuredModel(BaseModel):
+class ArchitectureStructuredModel(BaseModel):
     summary: str
     graph_overview: GraphOverview
     flow_description: str
