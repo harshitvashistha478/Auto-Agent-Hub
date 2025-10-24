@@ -55,49 +55,36 @@ Now analyze the idea and output the JSON. USER IDEA: "{user_input}"
 '''
 
 
-def fix_errors_prompt(filename: str, original_code: str, errors: List[str], 
-                         iteration: int, previous_fix_attempts: List[str] = None) -> str:
+def fix_errors_prompt(filename, history_context, errors_formatted, original_code) -> str:
     """Enhanced fixing prompt with better context"""
     
-    errors_formatted = "\n".join([f"{i+1}. {error}" for i, error in enumerate(errors)])
-    
-    context = f"This is iteration {iteration} of fixing."
-    if previous_fix_attempts:
-        context += f"\n\nPREVIOUS FIX ATTEMPTS HISTORY:\n"
-        context += "\n".join([f"- {attempt}" for attempt in previous_fix_attempts[-3:]])
-        context += "\n\nIMPORTANT: Previous fixes may have introduced new bugs. Be careful not to break working code."
-    
-    return f"""You are an expert code fixer. {context}
+    return f"""
+Fix the following code file.
 
 Filename: {filename}
+{history_context}
 
-Current Code:
+ERRORS TO FIX:
+{errors_formatted}
+
+CURRENT CODE:
 ```
 {original_code}
 ```
 
-Critical Errors to Fix (FOCUS ONLY ON THESE):
-{errors_formatted}
+INSTRUCTIONS:
+1. For each error, decide if you need to search for a solution
+2. If unfamiliar or library-specific, USE THE SEARCH TOOL
+3. Apply fixes with minimal changes
+4. Return ONLY the complete fixed code (no markdown, no explanations)
 
-FIXING GUIDELINES:
-1. Read the code carefully first
-2. Fix ONLY the specific errors listed above
-3. Make MINIMAL changes - don't refactor or reorganize
-4. If adding imports, add them at the top
-5. If fixing undefined variables, check if they should be parameters or need initialization
-6. Don't remove or change working functionality
-7. Preserve all comments and docstrings
-8. Test your mental model: will this code run without errors?
+Think step by step:
+- Analyze each error
+- Search if needed (use tools!)
+- Apply fix
+- Verify mentally
 
-CRITICAL RULES:
-- Change as LITTLE as possible
-- Don't introduce new dependencies unless absolutely necessary
-- Don't change function signatures unless required for the fix
-- Preserve the original code structure and style
-- Return ONLY the fixed code, no explanations
-- Do NOT wrap in markdown code blocks
-
-Return the complete fixed code now:"""
+Begin fixing"""
 
 
 def codegen_prompt(architecture: dict) -> str:

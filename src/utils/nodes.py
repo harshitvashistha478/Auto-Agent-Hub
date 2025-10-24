@@ -1,6 +1,7 @@
 from src.utils.state import AgentHubState
 from src.llm.llms import architecture_llm, codegen_llm, error_analysis_llm
 from src.utils.prompts import architecture_prompt, codegen_prompt, error_analysis_prompt, fix_errors_prompt
+from src.utils.tools import create_error_fixing_agent
 
 import os
 import re
@@ -301,7 +302,10 @@ def testing(state: AgentHubState) -> AgentHubState:
 
 
 def handle_errors(state: AgentHubState) -> AgentHubState:
-    """Enhanced error fixing with better tracking"""
+    """
+    Uses an agentic approach with web search to fix errors.
+    The agent can search for solutions online before fixing.
+    """
     error_dict = state.get("errors", {})
     
     if not error_dict:
@@ -312,7 +316,7 @@ def handle_errors(state: AgentHubState) -> AgentHubState:
     iteration = state.get("iteration_count", 0)
     fix_history = state.get("fix_history", {})
     
-    print("🔧 Starting error fixing process...")
+    print("🤖 Starting AGENTIC error fixing process...")
     print(f"🔄 Iteration: {iteration}")
     print("="*60)
     
@@ -321,15 +325,23 @@ def handle_errors(state: AgentHubState) -> AgentHubState:
     failed_files = []
     total_errors_fixed = 0
     
-    # Limit iterations to prevent infinite loops
+    # Limit iterations
     MAX_ITERATIONS = 5
     if iteration >= MAX_ITERATIONS:
         print(f"⚠️  Reached maximum iterations ({MAX_ITERATIONS}). Stopping.")
         state["errors_fixed"] = True
         return state
     
+    # Create the agent once per iteration
+    try:
+        agent = create_error_fixing_agent()
+    except Exception as e:
+        print(f"❌ Failed to create agent: {e}")
+        return state
+    
+    # Process each file with errors
     for filename, errors in error_dict.items():
-        if not errors: 
+        if not errors:
             continue
         
         file_path = os.path.join(base_dir, filename)
@@ -343,20 +355,37 @@ def handle_errors(state: AgentHubState) -> AgentHubState:
                 failed_files.append(filename)
                 continue
             
+            # Read original code
             with open(file_path, 'r', encoding='utf-8') as f:
                 original_code = f.read()
             
-            
-            # Get fix history for this file
+            # Get fix history
             file_history = fix_history.get(filename, [])
             
-            print(f"   🤖 Requesting LLM to fix errors...")
-            prompt = fix_errors_prompt(filename, original_code, errors, iteration, file_history)
-            response = codegen_llm.invoke(prompt)
+            # Prepare agent input
+            errors_formatted = "\n".join([f"{i+1}. {error}" for i, error in enumerate(errors)])
             
-            fixed_code = getattr(response, "content", str(response))
+            history_context = ""
+            if file_history:
+                history_context = f"\n\nPrevious fix attempts:\n" + "\n".join(file_history[-2:])
             
-            # Clean markdown if present
+            agent_input = fix_errors_prompt(filename, history_context, errors_formatted, original_code)
+
+            print(f"   🤖 Agent is analyzing and fixing...")
+            print(f"   🔍 Agent can search web for solutions...")
+            
+            # Invoke the agent
+            result = agent.invoke({"messages": [{"role": "user", "content": agent_input}]})
+            
+            # Extract fixed code from agent response
+            agent_messages = result.get("messages", [])
+            if not agent_messages:
+                raise Exception("Agent returned no messages")
+            
+            # Get the last message (agent's final response)
+            fixed_code = agent_messages[-1].content
+            
+            # Clean up if agent included markdown
             if "```" in fixed_code:
                 lines = fixed_code.split('\n')
                 in_code_block = False
@@ -373,43 +402,39 @@ def handle_errors(state: AgentHubState) -> AgentHubState:
             
             fixed_code = fixed_code.strip()
             
-            # Validate the fix isn't empty or too different
+            # Validate fix
             if not fixed_code or len(fixed_code) < len(original_code) * 0.3:
                 print(f"   ⚠️  Fix seems invalid (too small), keeping original")
                 failed_files.append(filename)
                 continue
+            
+            # Check if agent used search tools
+            tool_calls = [msg for msg in agent_messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
+            if tool_calls:
+                print(f"   🔍 Agent used {len(tool_calls)} search(es) to find solutions")
             
             # Write fixed code
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(fixed_code)
             
             # Update history
-            file_history.append(f"Iteration {iteration}: Fixed {len(errors)} errors")
+            search_note = f" (used {len(tool_calls)} searches)" if tool_calls else ""
+            file_history.append(f"Iteration {iteration}: Fixed {len(errors)} errors{search_note}")
             fix_history[filename] = file_history
             
             fixed_files.append(filename)
             total_errors_fixed += len(errors)
-            print(f"   ✅ Fixed and saved successfully!")
+            print(f"   ✅ Fixed and saved!")
             print(f"      Lines: {len(original_code.splitlines())} → {len(fixed_code.splitlines())}")
         
         except Exception as e:
             print(f"   ❌ Failed to fix: {str(e)}")
             failed_files.append(filename)
-            
-            # Restore from latest backup
-            backup_path = file_path + f".backup_iter{iteration}"
-            if os.path.exists(backup_path):
-                try:
-                    with open(backup_path, 'r', encoding='utf-8') as f:
-                        original = f.read()
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.write(original)
-                    print(f"   🔄 Restored from backup")
-                except:
-                    pass
+        
     
+    # Summary
     print("\n" + "="*60)
-    print(f"📊 Fixing Summary (Iteration {iteration}):")
+    print(f"📊 Agentic Fixing Summary (Iteration {iteration}):")
     print(f"   Total files processed: {len(error_dict)}")
     print(f"   Successfully fixed: {len(fixed_files)}")
     print(f"   Failed to fix: {len(failed_files)}")
@@ -426,10 +451,9 @@ def handle_errors(state: AgentHubState) -> AgentHubState:
         for filename in failed_files:
             print(f"   📄 {filename}")
     
-    # Clear errors for next check
+    # Update state
     state["errors"] = {}
     state["fix_history"] = fix_history
     state["iteration_count"] = iteration + 1
     
     return state
-
